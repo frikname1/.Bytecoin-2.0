@@ -1,0 +1,150 @@
+import telebot
+from telebot import types
+import random
+import json
+
+# Настройки
+BOT_TOKEN = '8584902991:AAHYjqDPDY0ih6FWP56yZ7GVRFCoBXWanKQ'
+ADMIN_IDS = [6599965092]  # ID администраторов
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# Хранилище данных (в реальном проекте используйте БД)
+user_data = {}
+
+def save_data():
+    with open('user_data.json', 'w') as f:
+        json.dump(user_data, f)
+
+def load_data():
+    global user_data
+    try:
+        with open('user_data.json', 'r') as f:
+            user_data = json.load(f)
+    except FileNotFoundError:
+        user_data = {}
+
+load_data()
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    if user_id not in user_data:
+        user_data[user_id] = {
+            'balance': 100,
+            'attempts': 0,
+            'wins': 0
+        }
+        save_data()
+    
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    btn1 = types.KeyboardButton('🎮 Играть')
+    btn2 = types.KeyboardButton('💰 Баланс')
+    btn3 = types.KeyboardButton('🏆 Рейтинг')
+    markup.add(btn1, btn2, btn3)
+    
+    if user_id in ADMIN_IDS:6599965092
+        btn4 = types.KeyboardButton('⚙️ Админка')
+        markup.add(btn4)
+    
+    bot.send_message(
+        message.chat.id,
+        f"Добро пожаловать, {message.from_user.first_name}!\n"
+        "Ваша стартовая сумма: 1000 монет",
+        reply_markup=markup
+    )
+
+@bot.message_handler(func=lambda m: m.text == '🎮 Играть')
+def play(message):
+    user_id = message.from_user.id
+    if user_data[user_id]['balance'] < 10:
+        bot.send_message(message.chat.id, "Недостаточно монет для игры!")
+        return
+    
+    user_data[user_id]['attempts'] += 1
+    secret_number = random.randint(1, 10)
+    
+    def guess_number(message, secret):
+        try:
+            guess = int(message.text)
+            if guess == secret:
+                user_data[user_id]['balance'] += 20
+                user_data[user_id]['wins'] += 1
+                bot.send_message(message.chat.id, "🎉 Вы угадали! +20 монет!")
+            else:
+                user_data[user_id]['balance'] -= 10
+                bot.send_message(
+                    message.chat.id,
+                    f"❌ Неверно! Загаданное число: {secret}. -10 монет"
+                )
+            save_data()
+            start(message)
+        except ValueError:
+            bot.send_message(message.chat.id, "Введите число!")
+            bot.register_next_step_handler(message, lambda m: guess_number(m, secret))
+    
+    msg = bot.send_message(message.chat.id, "Угадайте число от 1 до 10:")
+    bot.register_next_step_handler(msg, lambda m: guess_number(m, secret_number))
+
+@bot.message_handler(func=lambda m: m.text == '💰 Баланс')
+def balance(message):
+    user_id = message.from_user.id
+    balance = user_data[user_id]['balance']
+    attempts = user_data[user_id]['attempts']
+    wins = user_data[user_id]['wins']
+    bot.send_message(
+        message.chat.id,
+        f"💰 Ваш баланс: {balance} монет\n"
+        f"📊 Статистика: {wins} побед из {attempts} попыток"
+    )
+
+@bot.message_handler(func=lambda m: m.text == '🏆 Рейтинг')
+def rating(message):
+    sorted_users = sorted(
+        user_data.items(),
+        key=lambda x: x[1]['balance'],
+        reverse=True
+    )[:10]
+    rating_text = "🏆 ТОП-10 игроков:\n"
+    for i, (user_id, data) in enumerate(sorted_users, 1):
+        username = bot.get_chat(user_id).first_name or "Игрок"
+        rating_text += f"{i}. {username}: {data['balance']} монет\n"
+    bot.send_message(message.chat.id, rating_text)
+
+@bot.message_handler(func=lambda m: m.text == '⚙️ Админка' and m.from_user.id in ADMIN_IDS)
+def admin_panel(message):
+    markup = types.InlineKeyboardMarkup()
+    btn1 = types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
+    btn2 = types.InlineKeyboardButton("💸 Начислить монеты", callback_data="admin_add_coins")
+    markup.add(btn1, btn2)
+    bot.send_message(message.chat.id, "⚙️ Панель администратора:", reply_markup=markup)
+    @bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    if call.data == "admin_stats":
+        total_users = len(user_data)
+        total_coins = sum(u['balance'] for u in user_data.values())
+        bot.answer_callback_query(call.id)
+        bot.send_message(
+            call.message.chat.id,
+            f"📊 Статистика:\n"
+            f"Всего игроков: {total_users}\n"
+            f"Общая сумма монет: {total_coins}"
+        )
+    elif call.data == "admin_add_coins":
+        msg = bot.send_message(call.message.chat.id, "Введите ID пользователя и сумму:")
+        bot.register_next_step_handler(msg, add_coins_handler)
+
+def add_coins_handler(message):
+    try:
+        user_id, amount = map(int, message.text.split())
+        if user_id not in user_data:
+            user_data[user_id] = {'balance': 0, 'attempts': 0, 'wins': 0}
+        user_data[user_id]['balance'] += amount
+        save_data()
+        bot.send_message(message.chat.id, f"✅ Начислено {amount} монет пользователю {user_id}")
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка ввода!")
+
+if name == "main":
+    print("Бот запущен...")
+    bot.polling(none_stop=True)
